@@ -32,8 +32,15 @@ namespace ConsoleApp1
             Console.WriteLine("Modbus TCP Server is running...");
             while (true)
             {
-                var client = _listener.AcceptTcpClient();
-                ThreadPool.QueueUserWorkItem(HandleClient, client);
+                try
+                {
+                    var client = _listener.AcceptTcpClient();
+                    ThreadPool.QueueUserWorkItem(HandleClient, client);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error accepting client: {ex.Message}");
+                }
             }
         }
 
@@ -42,22 +49,47 @@ namespace ConsoleApp1
             var client = (TcpClient)obj;
             NetworkStream stream = client.GetStream();
 
-            while (true)
+            // 設置Keep-Alive選項
+            client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+
+            while (client.Connected)
             {
-                if (!client.Connected)
-                    break;
-
-                // 讀取請求
-                byte[] request = new byte[256];
-                int bytesRead = stream.Read(request, 0, request.Length);
-
-                if (bytesRead > 0)
+                try
                 {
-                    // 處理請求並生成回應
-                    byte[] response = ProcessRequest(request, bytesRead);
+                    if (stream.DataAvailable)
+                    {
+                        // 讀取請求
+                        byte[] request = new byte[256];
+                        int bytesRead = stream.Read(request, 0, request.Length);
+                        if (bytesRead > 0)
+                        {
+                            // 處理請求並生成回應
+                            byte[] response = ProcessRequest(request, bytesRead);
 
-                    // 發送回應
-                    stream.Write(response, 0, response.Length);
+                            // 發送回應
+                            stream.Write(response, 0, response.Length);
+                        }
+                    }
+                    else
+                    {
+                        // 檢查連線狀態，每秒鐘檢查一次
+                        Thread.Sleep(1000);
+                    }
+                }
+                catch (IOException ioEx)
+                {
+                    Console.WriteLine($"IOException: {ioEx.Message}");
+                    break;
+                }
+                catch (SocketException sockEx)
+                {
+                    Console.WriteLine($"SocketException: {sockEx.Message}");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Unexpected error: {ex.Message}");
+                    break;
                 }
             }
 
@@ -366,5 +398,54 @@ namespace ConsoleApp1
                 _discreteInputs[i] = (i % 2 == 0); // 初始化離散輸入值
             }
         }
+
+        public void UpdateInputRegister(int address, ushort value)
+        {
+            if (address >= 0 && address < _inputRegisters.Length)
+            {
+                _inputRegisters[address] = value;
+            }
+            else
+            {
+                throw new ArgumentOutOfRangeException(nameof(address), "Address out of range");
+            }
+        }
+
+        public void UpdateCoil(int address, bool value)
+        {
+            if (address >= 0 && address < _coils.Length)
+            {
+                _coils[address] = value;
+            }
+            else
+            {
+                throw new ArgumentOutOfRangeException(nameof(address), "Address out of range");
+            }
+        }
+
+        public void UpdateDiscreteInput(int address, bool value)
+        {
+            if (address >= 0 && address < _discreteInputs.Length)
+            {
+                _discreteInputs[address] = value;
+            }
+            else
+            {
+                throw new ArgumentOutOfRangeException(nameof(address), "Address out of range");
+            }
+        }
+
+        public void UpdateHoldingRegister(int address, ushort value)
+        {
+            if (address >= 0 && address < _holdingRegisters.Length)
+            {
+                _holdingRegisters[address] = value;
+            }
+            else
+            {
+                throw new ArgumentOutOfRangeException(nameof(address), "Address out of range");
+            }
+        }
     }
+
 }
