@@ -15,10 +15,12 @@ namespace ConsoleApp1
         private readonly bool[] _discreteInputs;
         private readonly ushort[] _holdingRegisters;
         private readonly ushort[] _inputRegisters;
+        private readonly byte _unitId;
 
-        public ModbusTcpServer(string ipAddress, int port)
+        public ModbusTcpServer(string ipAddress, int port, byte unitId)
         {
             _listener = new TcpListener(IPAddress.Parse(ipAddress), port);
+            _unitId = unitId;
             _coils = new bool[10000]; // 假設我們有10000個線圈
             _discreteInputs = new bool[10000]; // 假設我們有10000個離散輸入
             _holdingRegisters = new ushort[10000]; // 假設我們有10000個保持寄存器
@@ -51,29 +53,22 @@ namespace ConsoleApp1
 
             // 設置Keep-Alive選項
             client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            byte[] buffer = new byte[256];
+            int bufferOffset = 0;
 
             while (client.Connected)
             {
                 try
                 {
-                    if (stream.DataAvailable)
+                    int bytesRead = stream.Read(buffer, bufferOffset, buffer.Length - bufferOffset);
+                    if (bytesRead > 0)
                     {
-                        // 讀取請求
-                        byte[] request = new byte[256];
-                        int bytesRead = stream.Read(request, 0, request.Length);
-                        if (bytesRead > 0)
-                        {
-                            // 處理請求並生成回應
-                            byte[] response = ProcessRequest(request, bytesRead);
-
-                            // 發送回應
-                            stream.Write(response, 0, response.Length);
-                        }
+                        bufferOffset += bytesRead;
+                        ProcessBuffer(stream, buffer, ref bufferOffset);
                     }
                     else
                     {
-                        // 檢查連線狀態，每秒鐘檢查一次
-                        Thread.Sleep(1000);
+                        Thread.Sleep(1000); // 檢查連線狀態，每秒鐘檢查一次
                     }
                 }
                 catch (IOException ioEx)
@@ -96,7 +91,39 @@ namespace ConsoleApp1
             client.Close();
         }
 
-        private byte[] ProcessRequest(byte[] request, int bytesRead)
+        private void ProcessBuffer(NetworkStream stream, byte[] buffer, ref int bufferOffset)
+        {
+            int processedOffset = 0;
+
+            while (bufferOffset - processedOffset >= 6)
+            {
+                int length = (buffer[processedOffset + 4] << 8) + buffer[processedOffset + 5];
+                if (bufferOffset - processedOffset >= length + 6)
+                {
+                    byte[] request = new byte[length + 6];
+                    Buffer.BlockCopy(buffer, processedOffset, request, 0, length + 6);
+                    processedOffset += length + 6;
+
+                    byte[] response = ProcessRequest(request, request.Length);
+                    if (response != null)
+                    {
+                        stream.Write(response, 0, response.Length);
+                    }
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            if (processedOffset > 0)
+            {
+                Buffer.BlockCopy(buffer, processedOffset, buffer, 0, bufferOffset - processedOffset);
+                bufferOffset -= processedOffset;
+            }
+        }
+
+        private byte[]? ProcessRequest(byte[] request, int bytesRead)
         {
             // 簡單的檢查請求格式是否正確
             if (bytesRead < 12)
@@ -106,6 +133,9 @@ namespace ConsoleApp1
             byte functionCode = request[7];
             ushort startAddress = (ushort)((request[8] << 8) + request[9]);
             ushort quantityOfRegisters = (ushort)((request[10] << 8) + request[11]);
+
+            if (unitId != _unitId)
+                return null; // Unit ID不匹配，忽略請求
 
             switch (functionCode)
             {
